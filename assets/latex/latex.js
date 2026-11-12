@@ -361,6 +361,7 @@
       vec2 s2 = texture(uState, uvM + dir * 0.16 * vec2(1.0 / uAspect, 1.0)).xz;
       wide += dir * (max(mix(s1.x, s1.y, 0.85), 0.0) / 0.07 + max(mix(s2.x, s2.y, 0.85), 0.0) / 0.16);
     }
+    vec2 formDir = dot(wide, wide) > 1e-6 ? normalize(wide) : vec2(0.0);   // from here, which way the nearest form lies
     wide *= 0.125 * uFilm3.x;                                   // ~ slope of the wide height, times the give
     // the click's swell and thud, and the bed's own bounce, move the grain too: the pattern spreads
     // off a passing crest and closes back behind it. Without this the ripple was light sliding over a
@@ -490,21 +491,30 @@
     // cast shadow: walk toward the light; anything that stands above the line to it shades this
     // point. Six steps and a soft threshold give a wide penumbra; the shade is warm.
     if (uAtm.w > 0.0) {
-      vec2 toL = normalize(uLight.xy) * vec2(1.0 / uAspect, 1.0);
-      float occ = 0.0;
-      for (int i = 1; i <= 6; i++) {
-        float d = uAtm2.x * float(i) / 6.0;
-        float hs = texture(uState, uvM + toL * d).x;
-        occ += smoothstep(0.0, 0.42, (hs - max(h, 0.0)) - d * 1.6) * (1.0 - float(i) / 9.0);
+      // A form that comes forward shades the sheet on the side away from the light. The walk toward
+      // the light fans out a little (two rays, 14 degrees either side), so the shadow has no hard
+      // edge, and the further a form stands out the further its shade reaches (up to castLen).
+      vec2 Ld = normalize(uLight.xy);
+      vec2 La = vec2(Ld.x * 0.970 - Ld.y * 0.242, Ld.x * 0.242 + Ld.y * 0.970) * vec2(1.0 / uAspect, 1.0);
+      vec2 Lb = vec2(Ld.x * 0.970 + Ld.y * 0.242, -Ld.x * 0.242 + Ld.y * 0.970) * vec2(1.0 / uAspect, 1.0);
+      float occ = 0.0, h0 = max(h, 0.0);
+      for (int i = 1; i <= 7; i++) {
+        float d = uAtm2.x * float(i) / 7.0, w = 1.0 - float(i) / 10.0;
+        // 0.8: the light sits lower than before (1.6), so a form of ordinary height does throw a shade
+        occ += (smoothstep(0.0, 0.3, (texture(uState, uvM + La * d).x - h0) - d * 0.8)
+              + smoothstep(0.0, 0.3, (texture(uState, uvM + Lb * d).x - h0) - d * 0.8)) * w;
       }
-      float sh = clamp(occ / 3.2, 0.0, 1.0) * uAtm.w;
+      float sh = clamp(occ / 6.4, 0.0, 1.0) * uAtm.w;
       // the cast shadow belongs to the sheet AROUND a form. On the form itself it is let go: light
       // travels inside the silicone and fills it, and a shadow that starts exactly behind the ridge of
       // a nose is a hard line down its middle (it was, in deep orange).
       lit = mix(lit, lit * uBgShade * vec3(0.93, 0.88, 0.84), sh * (1.0 - 0.9 * onForm));
     }
     // halo: light caught in the sheet just outside a form (the wide reading is higher than the point)
-    lit += max(hW - max(h, 0.0), 0.0) * uAtm.z * vec3(1.0, 0.95, 0.88) * (0.5 + 0.5 * diff);
+    // ...and only on the side the light comes from. All the way round, it lit the far side too and
+    // cancelled the shadow that belongs there.
+    float litSide = smoothstep(-0.35, 0.65, -dot(formDir, normalize(uLight.xy)));
+    lit += max(hW - max(h, 0.0), 0.0) * uAtm.z * vec3(1.0, 0.95, 0.88) * (0.5 + 0.5 * diff) * mix(1.0, litSide, min(uAtm.w * 4.0, 1.0));
 
     // through the thin zones we see what is behind, tinted by transmission
     float alpha = 1.0 - thin * uTransl;
