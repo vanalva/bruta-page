@@ -419,7 +419,10 @@
       seen = (acc + 2.0 * exp(-gap0 / uThrough.y)) / 10.0;
       // seen through the rubber a form is peach to coral; the full orange still needs the sheet to be
       // stretched over it, so a pressed form keeps its modelling instead of going flat
-      stretch = max(stretch, seen * uThrough.x * (0.5 + 0.5 * clamp(thin, 0.0, 1.0)));
+      // PROGRESSIVE: a form only just behind the sheet is a faint warmth; the colour then builds with
+      // how far the sheet is pushed out over it. (At 0.5 + 0.5 * thin the whole face went orange the
+      // moment it touched.)
+      stretch = max(stretch, seen * uThrough.x * (0.2 + 0.8 * pow(clamp(thin, 0.0, 1.0), 1.4)));
     }    // skirts stay cream, crowns go orange
     // what the touch left: a blush on the cream, a deeper warmth on forms that were already warm.
     // It tops out in the coral, never the raw orange.
