@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow, noarchive" data-flowriter-staging>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Latex hero</title>
+<!-- Component: the latex (silicone membrane) hero. Page copy from design/experiments/latex/hero.html; engine is the
+     latex-live version approved 13 Nov (face seen through the sheet as a layer, grain in the rubber, touch and release
+     bounce, click ripple, touch paint), in the 'ambience' preset. ../assets/latex/*.js and tracks/ are byte-identical
+     copies of design/experiments/latex-live/ on 2026-11-13. The experiment folder stays the source: re-copy after
+     changing it there. Opens on liveFace (face only, centred); ?scene=liveBoth / liveHand, ?preset=default to switch.
+     Not Webflow-ready yet (WebGL + script: an embed, not styleLess). -->
+<link rel="icon" href="data:,">
+<!-- the face's motion track: fetched early, and named here so the static build ships it (it only
+     copies assets a page references; the engine asks for these from script) -->
+<link rel="preload" href="../assets/latex/tracks/face-kling.json" as="fetch" crossorigin>
+<link rel="preload" href="../assets/latex/tracks/face-kling.bin" as="fetch" crossorigin>
+<link rel="prefetch" href="../assets/latex/tracks/hand-kling.json">
+<link rel="prefetch" href="../assets/latex/tracks/hand-kling.bin">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zalando+Sans+Expanded:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --orange: #ff3c02;
+    --ink: #0b0806;
+    --paper: #efe4cf;
+    --gutter: clamp(20px, 4vw, 64px);
+  }
+  html, body { margin: 0; height: 100%; background: var(--paper); overflow: hidden; }
+  body { font-family: "Zalando Sans Expanded", system-ui, sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; }
+  body.is-dark { --ink: #efe4cf; --paper: #1b1613; }
+
+  #latex { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: none; }
+  body.native-cursor #latex { cursor: crosshair; }
+
+  /* the text layer lets the pointer through to the canvas; only the buttons take it back */
+  .hero {
+    position: fixed; inset: 0; z-index: 1; pointer-events: none;
+    display: flex; flex-direction: column; justify-content: flex-end;
+    padding: var(--gutter); padding-bottom: calc(var(--gutter) + env(safe-area-inset-bottom));
+    box-sizing: border-box;
+  }
+  .hero__top {
+    position: absolute; top: var(--gutter); left: var(--gutter); right: var(--gutter);
+    display: flex; justify-content: space-between; gap: 16px;
+  }
+  .eyebrow, .hint {
+    margin: 0; font-size: 11px; line-height: 1.3; font-weight: 400;
+    letter-spacing: 0.16em; text-transform: uppercase;
+  }
+  .hint { opacity: 0.55; text-align: right; }
+  .hint .touch { display: none; }
+  body.is-touch .hint .mouse { display: none; }
+  body.is-touch .hint .touch { display: inline; }
+
+  .hero h1 {
+    margin: 0 0 clamp(20px, 3vw, 40px);
+    font-weight: 600; font-size: clamp(2.8rem, 7vw, 7.5rem); line-height: 0.95; letter-spacing: -0.02em;
+    max-width: 11.5em; text-wrap: balance;
+  }
+  .hero__foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px 40px; flex-wrap: wrap; }
+  .hero__sub { margin: 0; font-size: clamp(0.95rem, 1.2vw, 1.15rem); line-height: 1.45; max-width: 26em; }
+  .ctas { display: flex; gap: 10px; flex-wrap: wrap; pointer-events: auto; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; min-height: 48px; box-sizing: border-box;
+    padding: 0 26px; border-radius: 999px; border: 1px solid var(--ink);
+    font-family: inherit; font-weight: 600; font-size: 13px; line-height: 1; letter-spacing: 0.06em; text-transform: uppercase; text-decoration: none;
+    transition: background-color .2s, color .2s, border-color .2s;
+  }
+  .btn--fill { background: var(--ink); color: var(--paper); }
+  .btn--fill:hover { background: var(--orange); border-color: var(--orange); color: var(--ink); }
+  .btn--ghost { background: transparent; color: var(--ink); }
+  .btn--ghost:hover { border-color: var(--orange); color: var(--orange); }
+  .btn:focus-visible { outline: 2px solid var(--orange); outline-offset: 3px; }
+
+  #cursor { position: fixed; left: 0; top: 0; z-index: 2; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%;
+            background: var(--orange); pointer-events: none; opacity: 0; transition: opacity .2s, transform .15s; }
+  body.has-pointer #cursor { opacity: 0.9; }
+  body.is-down #cursor { transform: scale(2.2); }
+  body.native-cursor #cursor, body.ball-cursor #cursor { display: none; }   /* the cursor is the ball behind the sheet */
+
+  /* the UI switch: hides the copy and the buttons so the sheet can be seen on its own */
+  .ui-switch {
+    position: fixed; z-index: 3; left: var(--gutter); top: calc(var(--gutter) + 28px + env(safe-area-inset-top));
+    display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 4px 0 0;
+    background: none; border: 0; color: var(--ink); cursor: pointer; -webkit-tap-highlight-color: transparent;
+    font: 400 11px/1 "Zalando Sans Expanded", system-ui, sans-serif; letter-spacing: 0.16em; text-transform: uppercase;
+    opacity: 0.6; transition: opacity .2s;
+  }
+  .ui-switch:hover, .ui-switch:focus-visible { opacity: 1; }
+  .ui-switch:focus-visible { outline: 2px solid var(--orange); outline-offset: 4px; }
+  .ui-switch__track { width: 34px; height: 20px; border-radius: 999px; border: 1px solid var(--ink); position: relative; flex: none; }
+  .ui-switch__track::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%;
+    background: var(--ink); transform: translateX(14px); transition: transform .2s, background-color .2s;
+  }
+  body.ui-off .ui-switch__track::after { transform: none; background: var(--orange); }
+  body.ui-off .hero { opacity: 0; visibility: hidden; }
+  body.ui-off .ui-switch { opacity: 0.35; }
+  .hero { transition: opacity .25s, visibility .25s; }
+
+  #err { position: fixed; inset: 0; display: none; place-items: center; background: var(--paper); padding: 24px; text-align: center; }
+
+  @media (max-width: 767px) {
+    .hint { display: none; }
+    .hero__foot { flex-direction: column; align-items: flex-start; }
+    .ctas { width: 100%; }
+    .btn { flex: 1 1 auto; }
+  }
+  @media (max-width: 767px) {
+    .hero h1 { font-size: clamp(2.3rem, 11.5vw, 3.6rem); max-width: none; }
+    .eyebrow { max-width: 16em; }
+    .ui-switch { top: auto; left: auto; right: var(--gutter); bottom: auto; top: calc(var(--gutter) - 12px + env(safe-area-inset-top)); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .btn, #cursor, .hero, .ui-switch, .ui-switch__track::after { transition: none; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="latex" aria-hidden="true"></canvas>
+
+  <main class="hero">
+    <div class="hero__top">
+      <p class="eyebrow">Creative agency · Madrid · Caracas · USA</p>
+      <p class="hint" aria-hidden="true"><span class="mouse">Press and pull the surface</span><span class="touch">Hold and pull the surface</span></p>
+    </div>
+    <h1>We help small brands look big.</h1>
+    <div class="hero__foot">
+      <p class="hero__sub">Branding, web, media and automation.</p>
+      <div class="ctas">
+        <a class="btn btn--fill" href="#contact">Book a call</a>
+        <a class="btn btn--ghost" href="#work">See the work</a>
+      </div>
+    </div>
+  </main>
+
+  <button class="ui-switch" id="uiSwitch" type="button" role="switch" aria-checked="true" aria-label="Show interface">
+    <span class="ui-switch__track" aria-hidden="true"></span><span>UI</span>
+  </button>
+
+  <div id="cursor"></div>
+  <div id="err"></div>
+
+  <script src="../assets/latex/live.js"></script>
+  <script src="../assets/latex/scenes.js"></script>
+  <script>
+  // Clip sprites (assets/*.png) and motion tracks (tracks/*.json) are written relative to the
+  // experiment page and resolve against this page, not the script. Point them at ../assets/latex/
+  // so the experiment files can stay unchanged copies.
+  (function () {
+    var dir = "../assets/latex/";
+    Object.values(window.LATEX_SHAPES).forEach(function (s) {
+      if (s.sprite) s.sprite = dir + s.sprite.replace(/^assets\//, "");
+      if (s.meta) s.meta = dir + s.meta.replace(/^assets\//, "");
+    });
+    Object.values(window.LATEX_SCENES).forEach(function (sc) {
+      (sc.live || []).forEach(function (d) { if (d.track) d.track = dir + d.track; });
+    });
+  })();
+  </script>
+  <script src="../assets/latex/latex.js"></script>
+  <script src="../assets/latex/presets.js"></script>
+  <script>
+  (function () {
+    const KIT = LATEX_KIT, PRESETS = LATEX_PRESETS;
+    const q = new URLSearchParams(location.search);
+    const canvas = document.getElementById('latex');
+    let surf;
+    try {
+      surf = new LatexSurface(canvas, { maxDpr: 1.5 });
+    } catch (e) {
+      const el = document.getElementById('err'); el.style.display = 'grid'; el.textContent = e.message; throw e;
+    }
+    window.surf = surf;
+
+    surf.setQuality(KIT.pickQuality(q));
+    const reduced = KIT.reducedMotion();
+    if (reduced || KIT.coarsePointer()) document.body.classList.add('native-cursor');
+    if (KIT.coarsePointer()) document.body.classList.add('is-touch');
+
+    // the demo looks the same for everyone: ?p= / ?preset= only, never the panel's saved params
+    // the hero's look is the 'ambience' preset (approved 13 Nov); ?preset=default shows the plain sheet
+    let partial = PRESETS.ambience;
+    if (q.get('p')) partial = KIT.parse(q.get('p'), true);
+    else if (PRESETS[q.get('preset')]) partial = PRESETS[q.get('preset')];
+    KIT.apply(surf, partial, reduced ? { idle: 0 } : {});
+
+    if (surf.params.cursorBall > 0) document.body.classList.add('ball-cursor');
+
+    // phones run the low quality tier (canvas at 1 px per css px): keep the grain fine there, or it
+    // is drawn three screen pixels wide
+    if (surf.quality === 'low') { surf.params.filmSize = 1.0; surf.params.filmGrain *= 0.85; }
+
+    // scene after the params (as latex-live/index.html does): KIT.apply resets to DEFAULTS, and the live
+    // scenes' own physics (damping 0.78, substeps 5) must survive or fast fingers ripple
+    const keys = Object.keys(LATEX_SCENES);
+    surf.setScene(LATEX_SCENES[keys.includes(q.get('scene')) ? q.get('scene') : keys[0]]);
+
+    // a dark latex (night) flips the copy to cream
+    const c = parseInt(String(surf.params.cream).slice(1), 16);
+    const lum = (0.2126 * ((c >> 16) & 255) + 0.7152 * ((c >> 8) & 255) + 0.0722 * (c & 255)) / 255;
+    if (lum < 0.4) document.body.classList.add('is-dark');
+
+    const cur = document.getElementById('cursor');
+    window.addEventListener('pointermove', e => {
+      if (e.pointerType !== 'mouse') return;
+      cur.style.left = e.clientX + 'px'; cur.style.top = e.clientY + 'px'; document.body.classList.add('has-pointer');
+    });
+    window.addEventListener('pointerdown', () => document.body.classList.add('is-down'));
+    window.addEventListener('pointerup', () => document.body.classList.remove('is-down'));
+    document.addEventListener('pointerleave', () => document.body.classList.remove('has-pointer'));
+
+    // ---- UI switch: remembered on this device; U toggles it too ----
+    const uiBtn = document.getElementById('uiSwitch');
+    function setUi(on) {
+      document.body.classList.toggle('ui-off', !on);
+      uiBtn.setAttribute('aria-checked', String(on));
+      try { localStorage.setItem('bruta.hero.ui', on ? '1' : '0'); } catch (_) { /* private mode */ }
+    }
+    let uiOn = true;
+    try { uiOn = localStorage.getItem('bruta.hero.ui') !== '0'; } catch (_) { /* private mode */ }
+    if (q.get('ui') === '0') uiOn = false;
+    setUi(uiOn);
+    uiBtn.addEventListener('click', () => setUi(document.body.classList.contains('ui-off')));
+    window.addEventListener('keydown', e => { if (e.key.toLowerCase() === 'u' && !e.metaKey && !e.ctrlKey) setUi(document.body.classList.contains('ui-off')); });
+
+    // ---- fit the form to the screen: the scenes are laid out for a wide viewport. On a phone held
+    // upright the face would be wider than the screen, so it is scaled to the width and lifted a
+    // little to sit above the headline ----
+    const base = new Map();
+    function fit() {
+      const a = surf.aspect || (innerWidth / innerHeight);
+      for (const r of surf.rigs) {
+        if (!base.has(r)) base.set(r, { size: r.def.size, x: r.def.x, y: r.def.y });
+        const b = base.get(r), k = Math.min(1, a * 1.18);            // the face is about 0.55 of its size wide
+        r.def.size = b.size * k;
+        r.def.x = a < 1 ? 0.5 + (b.x - 0.5) * a : b.x;
+        r.def.y = a < 0.8 ? 0.6 : b.y;
+      }
+    }
+    surf.onRigs = fit;
+    window.addEventListener('resize', () => setTimeout(fit, 160));   // after the engine's own debounced resize
+    fit();
+
+    surf.start();
+  })();
+  </script>
+</body>
+</html>

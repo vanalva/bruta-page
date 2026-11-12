@@ -1,0 +1,17 @@
+/* ═══════════════════════════════════════════
+   Bruta — Design System Variables
+   Framework: flwr
+   Pinned version: see .flowriter-lock
+
+   Populate via /from-figma, /from-reference, or /oklch-seed.
+   Override palette seeds, typography family, or spacing scale here.
+   Reference manifest at .flwr/MANIFEST.json for the available palette
+   categories, collections, and modes.
+   ═══════════════════════════════════════════ */
+
+:root {
+    /* Brand overrides go here. Examples once /from-* has run:
+       --_palette---core--seed: oklch(...);
+       --_typography---font--sans: 'Brand Font', sans-serif;
+    */
+}
