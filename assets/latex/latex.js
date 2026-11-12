@@ -367,6 +367,7 @@
     float rE = 0.012;
     vec2 rG = vec2(ripple(uv + vec2(rE, 0.0)) - ripple(uv - vec2(rE, 0.0)), ripple(uv + vec2(0.0, rE)) - ripple(uv - vec2(0.0, rE))) / (2.0 * rE);
     rG.x /= uAspect;
+    rG /= 1.0 + length(rG) / 2.5;                              // soft limit: the sharp point at the heart of a fresh thud must not pinch the grain
     wide += rG * uFilm3.x * uRipGrain;
     float wl = length(wide);
     vec2 gCarry = (wl > 1e-5 ? wide / wl * 0.07 * tanh(wl / 0.07) : vec2(0.0)) * vec2(1.0 / uAspect, 1.0);   // rubber only gives so far
@@ -821,7 +822,7 @@
     drumDamp: 0.13,       // ...0.1 keeps bouncing, 0.5 barely overshoots
     drumKick: 1.2,        // ...extra shove on first touch, on letting go, on a click
     drumWarp: 0.16,       // ...how much the picture is carried outward as the bed rises
-    ripGrain: 2.0,        // a passing ripple moves the grain this much (0 = the ripple is light only)
+    ripGrain: 1.3,        // a passing ripple moves the grain this much (0 = the ripple is light only)
     bounce: 0.5,          // a form's first touch and its letting go make the sheet thud (0 = off)
     ripAmt: 0.30,         // click: height of the one swell that runs out from the touch
     ripSpeed: 2.6,        // ...how fast it runs (height units / s): rubber is quick
@@ -1452,11 +1453,12 @@
       const up = e => {
         if (this._move) { this._move = null; this.drawBehind(); this._changed(); return; }
         if (this._touch) {
-          // plain tap: a short press pulse at the tap point
+          // plain tap: the sheet thuds NOW, at the finger. No press is simulated: the quarter-second
+          // pretend press that used to stand in for a tap delayed the thud until it ended, swallowed
+          // the taps that came during it, dug a small dent and left a dot of colour (the "pinch").
           clearTimeout(this._holdT);
           const t = this._touch; this._touch = null;
-          this._grab(t);
-          this._pulseUntil = this.time + LatexSurface.PULSE_S;
+          this._tapThud(t.x, t.y);
           this.pointer.inside = false;
           return;
         }
@@ -1492,6 +1494,15 @@
       d.grabX = p.x; d.grabY = p.y; d.cx = p.x; d.cy = p.y;
       d.ex = d.ey = d.vx = d.vy = 0;
       this.cur.x = p.x; this.cur.y = p.y; this.cur.vx = this.cur.vy = 0;
+    }
+
+    // one tap = one thud of the sheet at that point, plus a shove of the whole bed (capped, so a
+    // burst of taps cannot wind it up)
+    _tapThud(x, y) {
+      const P = this.params;
+      this.rips.push({ x, y, t0: this.time, amp: 0.7 });
+      if (this.rips.length > 4) this.rips.shift();
+      if (this.drum) this.drum.v = Math.max(-2.2, Math.min(2.2, this.drum.v + 1.0 * P.drumKick));
     }
 
     // critically-ish damped spring step for a scalar: returns [x, v]
@@ -1586,7 +1597,7 @@
         else {
           const held = this.time - (this._pressT0 == null ? this.time : this._pressT0);
           const tap = held < 0.32 && pulled < 0.2;
-          if (tap) { amp = 0.7; this.drum.v += 1.0 * P.drumKick; }
+          if (tap) { this._tapThud(dr.cx, dr.cy); }
           else { amp = 0.12 * deep + 0.3 * pulled; this.drum.v += 0.7 * pulled * P.drumKick; }
         }
         if (Math.abs(amp) > 0.02) {
@@ -1803,7 +1814,9 @@
       const touching = this.pointer.inside || pressing;
       if (touching && P.paintAmt > 0) {
         if (pressing) {
-          dep = P.paintPress * dt + P.paintDrag * travel;
+          // a press only starts to stain once it has been held a moment: a click or a tap leaves no dot
+          const heldFor = this.time - (this._pressT0 == null ? this.time : this._pressT0);
+          dep = (heldFor > 0.2 ? P.paintPress * dt : 0) + P.paintDrag * travel;
           radius = P.paintSize * (1 + 0.5 / (1 + speed * 2.5));              // a held press spreads, a fast scratch stays thin
         } else if (!this.pointer.touch) {
           dep = P.paintHover * travel;
