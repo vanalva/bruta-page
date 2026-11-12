@@ -167,6 +167,7 @@
   uniform vec4  uThrough;    // amount, fog length (how far behind a form still shows), blur per unit of gap, live on
   uniform float uAtm4;       // 1 = translucency and sheen appear only where the sheet is stretched; 0 = everywhere on a form
   uniform vec2  uAtm3;       // translucent shade (a form's shadow side goes deeper orange, not darker), soft sheen
+  uniform vec2  uCastOut;    // shadow on the sheet beside a form, away from the light: amount, reach (height units)
   uniform vec3  uBgShade;    // what the sheet falls off to, away from the light (a warm taupe, multiplied)
   uniform sampler2D uPaint;  // colour the touch left in the material
   uniform float uPaintAmt;
@@ -485,6 +486,22 @@
         occ += smoothstep(0.0, 0.42, (hs - max(h, 0.0)) - d * 1.6) * (1.0 - float(i) / 9.0);
       }
       float sh = clamp(occ / 3.2, 0.0, 1.0) * uAtm.w;
+      // OUTSIDE SHADOW (castOut): a form that stands out shades the sheet beside it, on the side away
+      // from the light. It is masked to the sheet OUTSIDE every form: st.z is what is pushing at this
+      // point, zero beyond a form's outline, so inside a form this adds exactly nothing.
+      if (uCastOut.x > 0.0) {
+        float outside = 1.0 - smoothstep(0.0, 0.05, T);
+        if (outside > 0.0) {
+          float reach = 0.0;
+          for (int i = 1; i <= 8; i++) {
+            float d = uCastOut.y * float(i) / 8.0;
+            // how much form stands between this point and the light, nearer counting more
+            reach += smoothstep(0.12, 0.5, texture(uState, uvM + toL * d).z) * (1.0 - float(i) / 10.0);   // only what really stands out casts
+          }
+          float so = clamp(reach / 3.0, 0.0, 1.0) * uCastOut.x * outside;
+          lit = mix(lit, lit * uBgShade * vec3(0.93, 0.88, 0.84), so);
+        }
+      }
       // the cast shadow belongs to the sheet AROUND a form. On the form itself it is let go: light
       // travels inside the silicone and fills it, and a shadow that starts exactly behind the ridge of
       // a nose is a hard line down its middle (it was, in deep orange).
@@ -788,6 +805,8 @@
     bleed: 0.0,           // colour follows a wider reading of the height: it floods the form and bleeds past its edge
     bleedRadius: 0.035,   // ...how wide (height units)
     halo: 0.0,            // light caught in the sheet around a form
+    castOut: 0.0,         // a soft shadow on the sheet beside a form, opposite the light, never on the form itself
+    castOutLen: 0.09,     // ...how far it reaches (viewport heights)
     cast: 0.0,            // soft cast shadow away from the light
     castLen: 0.09,        // ...how far it reaches (height units)
     focus: 0.0,           // soft focus on the low parts of a form
@@ -1769,6 +1788,7 @@
       gl.uniform4f(d.uAtm, P.bleed, P.bleedRadius, P.halo, P.cast);
       gl.uniform4f(d.uAtm2, P.castLen, P.focus, P.bgAmt, P.tintCurve);
       gl.uniform3fv(d.uBgShade, hex(P.bgShade));
+      gl.uniform2f(d.uCastOut, P.castOut, P.castOutLen);
       gl.uniform2f(d.uAtm3, P.translucent, P.sheen);
       gl.uniform1f(d.uAtm4, P.stretchDrive);
       gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.liveT.tex);
