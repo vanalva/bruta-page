@@ -191,18 +191,26 @@
   }
   // film grain: fine, luminance only, re-rolled a few times a second. It belongs to the picture,
   // not to the rubber (the sheet itself stays smooth).
-  float vnoise(vec2 p) {
+  // Gradient noise (each lattice corner holds a random DIRECTION, not a random brightness). Value
+  // noise, used before, is brightest and darkest exactly on its grid, so it reads as soft squares,
+  // and stretched it reads as stretched pixels. This has no visible grid.
+  float gnoise(vec2 p) {
     vec2 i = floor(p), f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x), mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float a0 = 6.2831853 * hash21(i), a1 = 6.2831853 * hash21(i + vec2(1.0, 0.0));
+    float a2 = 6.2831853 * hash21(i + vec2(0.0, 1.0)), a3 = 6.2831853 * hash21(i + vec2(1.0, 1.0));
+    float n0 = dot(vec2(cos(a0), sin(a0)), f), n1 = dot(vec2(cos(a1), sin(a1)), f - vec2(1.0, 0.0));
+    float n2 = dot(vec2(cos(a2), sin(a2)), f - vec2(0.0, 1.0)), n3 = dot(vec2(cos(a3), sin(a3)), f - vec2(1.0, 1.0));
+    return mix(mix(n0, n1, u.x), mix(n2, n3, u.x), u.y);
   }
-  // two sizes of smooth noise. Smooth on purpose: a raw per-pixel hash re-rolls completely when its
-  // position moves by a hair, so grain stuck to a moving sheet would boil instead of travelling.
+  // Grain: three sizes of that noise, each layer turned to a different angle so no direction lines up,
+  // then pushed toward specks (film grain is clumps of points, not an even fog).
   float filmGrain(vec2 frag) {
-    vec2 o = uFilm.z * vec2(37.0, 17.0);
-    float fine = vnoise(frag / (uFilm.y * 0.6) + o) - 0.5;
-    float soft = vnoise(frag / (uFilm.y * 1.7) + o * 1.3 + 91.0) - 0.5;
-    return fine * 1.5 + soft * 0.9;
+    vec2 p = frag / uFilm.y + uFilm.z * vec2(37.0, 17.0);
+    float n = gnoise(p * 1.75) * 0.9
+            + gnoise(mat2(0.80, -0.60, 0.60, 0.80) * p * 0.93 + 31.7) * 0.75
+            + gnoise(mat2(0.36, 0.93, -0.93, 0.36) * p * 0.43 + 74.3) * 0.55;
+    return sign(n) * pow(abs(n) * 1.25, 1.3) * 0.62;
   }
 
   // The grain of a sheet that is being stretched: s = 0 relaxed, 1 fully stretched. Pulled rubber
@@ -377,8 +385,7 @@
     // is matte, opaque and grainy; a stretched one is smooth, lets light through and catches it.
     float push = uFilm2.z * smoothstep(0.12, 0.85, max(mix(h, T, 0.85), 0.0) * uThinAmt + length(g) * 0.35);
     float grainV = grainAt(gPos, push);
-    vec2 grainG = vec2(grainAt(gPos + vec2(gStep, 0.0), push) - grainAt(gPos - vec2(gStep, 0.0), push),
-                       grainAt(gPos + vec2(0.0, gStep), push) - grainAt(gPos - vec2(0.0, gStep), push));
+    vec2 grainG = 2.0 * vec2(grainAt(gPos + vec2(gStep, 0.0), push) - grainV, grainAt(gPos + vec2(0.0, gStep), push) - grainV);   // forward differences: 3 reads of the grain, not 5
     // on a slope the sheet is stretched tight and smooth: the relief fades there (left on, the
     // stretched grain turns into fur along the fingers and the sheet reads as plaster)
     float gFlat = 1.0 - 0.9 * smoothstep(0.05, 0.5, length(g));
