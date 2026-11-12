@@ -190,15 +190,9 @@
 
     if (surf.params.cursorBall > 0) document.body.classList.add('ball-cursor');
 
-    // phones run the low quality tier: keep the grain fine there
-    if (surf.quality === 'low') {
-      // ...and draw at 1.5 px per css px on dense screens (the tier's own 1 px made the grain blocky
-      // on a 3x phone). ?dpr=1 goes back to the lighter setting if a phone struggles.
-      const want = parseFloat(q.get('dpr')) || 1.5;
-      surf.dpr = Math.min(window.devicePixelRatio || 1, want);
-      surf.resize(true);
-      surf.params.filmSize = 1.1; surf.params.filmGrain *= 0.9;
-    }
+    // phones run the low quality tier (canvas at 1 px per css px): keep the grain fine there, or it
+    // is drawn three screen pixels wide
+    if (surf.quality === 'low') { surf.params.filmSize = 1.0; surf.params.filmGrain *= 0.85; }
 
     // scene after the params (as latex-live/index.html does): KIT.apply resets to DEFAULTS, and the live
     // scenes' own physics (damping 0.78, substeps 5) must survive or fast fingers ripple
