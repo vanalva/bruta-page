@@ -163,6 +163,7 @@
   uniform vec4  uAtm;        // atmosphere: colour bleed amount, bleed radius (height units), halo, cast shadow
   uniform vec4  uAtm2;       // cast shadow length (height units), soft focus, background shade amount, colour curve
   uniform sampler2D uLiveD;  // live forms: r = contact height, g = the form's real depth (negative = behind the sheet)
+  uniform float uThroughBase; // how much of the through colour a form shows before it stretches the sheet at all
   uniform vec4  uThrough;    // amount, fog length (how far behind a form still shows), blur per unit of gap, live on
   uniform float uAtm4;       // 1 = translucency and sheen appear only where the sheet is stretched; 0 = everywhere on a form
   uniform vec2  uAtm3;       // translucent shade (a form's shadow side goes deeper orange, not darker), soft sheen
@@ -422,7 +423,7 @@
       // PROGRESSIVE: a form only just behind the sheet is a faint warmth; the colour then builds with
       // how far the sheet is pushed out over it. (At 0.5 + 0.5 * thin the whole face went orange the
       // moment it touched.)
-      stretch = max(stretch, seen * uThrough.x * (0.2 + 0.8 * pow(clamp(thin, 0.0, 1.0), 1.4)));
+      stretch = max(stretch, seen * uThrough.x * (uThroughBase + (1.0 - uThroughBase) * pow(clamp(thin, 0.0, 1.0), 1.2)));
     }    // skirts stay cream, crowns go orange
     // what the touch left: a blush on the cream, a deeper warmth on forms that were already warm.
     // It tops out in the coral, never the raw orange.
@@ -794,6 +795,7 @@
     stretchDrive: 1,      // 1 = translucency and sheen grow with how far a form pushes the sheet out; 0 = constant
     translucent: 0.0,     // a form's shadow side goes deeper orange instead of darker (light inside the silicone)
     sheen: 0.0,           // one broad, pale, matte highlight on the slopes that face the light
+    throughBase: 0.3,     // colour a form shows from just behind the sheet, before any stretch (0 = none, 1 = all at once)
     through: 0.0,         // the sheet as a layer: forms behind it show through by how close they are (live forms)
     fog: 0.22,            // ...how far behind the rubber a form can sit and still show
     fogBlur: 0.10,        // ...how much it blurs with distance
@@ -1574,11 +1576,21 @@
         this._wasPressing = pressing;
         const pulled = Math.min(1, Math.hypot(dr.ex * a, dr.ey) / Math.max(P.dragMax, 1e-4));
         const deep = Math.min(1, Math.abs(this.dimple.depth) / Math.max(P.pressDepth, 1e-4));
-        const amp = pressing ? -0.55 : 0.6 * deep + 0.7 * pulled;
-        // the bed answers the hand as well: a press sends it in, letting go throws it back out
-        this.drum.v += (pressing ? -1.1 : 1.6 * (0.4 * deep + 0.6 * pulled) + 0.5) * P.drumKick;
+        // A TAP bounces, a DRAG does not. Nothing fires when the finger lands: at that moment a tap and
+        // the start of a drag are the same thing, and a sheet that jumps the instant it is touched
+        // fights the drag. The answer comes on letting go: a quick tap that barely moved gets the full
+        // thud and a throw of the whole bed; a hold or a drag is released gently, by how far the skin
+        // was pulled.
+        let amp = 0;
+        if (pressing) { this._pressT0 = this.time; }
+        else {
+          const held = this.time - (this._pressT0 == null ? this.time : this._pressT0);
+          const tap = held < 0.32 && pulled < 0.2;
+          if (tap) { amp = 0.7; this.drum.v += 1.0 * P.drumKick; }
+          else { amp = 0.12 * deep + 0.3 * pulled; this.drum.v += 0.7 * pulled * P.drumKick; }
+        }
         if (Math.abs(amp) > 0.02) {
-          this.rips.push({ x: pressing ? this.pointer.x : dr.cx, y: pressing ? this.pointer.y : dr.cy, t0: this.time, amp });
+          this.rips.push({ x: dr.cx, y: dr.cy, t0: this.time, amp });
           if (this.rips.length > 4) this.rips.shift();
         }
       }
@@ -1622,7 +1634,7 @@
       const cgx = tot > 1e-3 ? lx / tot : 0.5, cgy = tot > 1e-3 ? ly / tot : 0.5;
       const ce = Math.min(1, dt * 2.5);
       dm2.cx += (cgx - dm2.cx) * ce; dm2.cy += (cgy - dm2.cy) * ce;
-      const goal = (load * 1.6 - finger * 0.9) * P.drum;
+      const goal = (load * 1.6 - finger * 0.3) * P.drum;   // a held finger leans the bed in only a little, or holding still makes it bounce
       const wd = 6.2832 * P.drumFreq;
       for (let i = 0; i < 4; i++) { const hh = dt / 4; dm2.v += (-wd * wd * (dm2.z - goal) - 2 * P.drumDamp * wd * dm2.v) * hh; dm2.z += dm2.v * hh; }
     }
@@ -1750,6 +1762,7 @@
       gl.uniform1f(d.uAtm4, P.stretchDrive);
       gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.liveT.tex);
       gl.uniform1i(d.uLiveD, 6);
+      gl.uniform1f(d.uThroughBase, P.throughBase);
       gl.uniform4f(d.uThrough, P.through, P.fog, P.fogBlur, (this.rigs.length || this._ballOn) ? 1 : 0);
       gl.uniform3f(d.uFilm, P.filmGrain, Math.max(1, P.filmSize * this.dpr), P.filmStick > 0.5 ? 0 : Math.floor(this.time * P.filmRate) % 1024);
       gl.uniform3f(d.uFilm2, this.canvas.width, this.canvas.height, P.filmStick);
