@@ -163,6 +163,7 @@
   uniform vec4  uAtm;        // atmosphere: colour bleed amount, bleed radius (height units), halo, cast shadow
   uniform vec4  uAtm2;       // cast shadow length (height units), soft focus, background shade amount, colour curve
   uniform sampler2D uLiveD;  // live forms: r = contact height, g = the form's real depth (negative = behind the sheet)
+  uniform float uTintSoft;   // 1 = even colour ramp with no ceiling and no bands; 0 = the original three-stage ramp
   uniform float uThroughBase; // how much of the through colour a form shows before it stretches the sheet at all
   uniform vec4  uThrough;    // amount, fog length (how far behind a form still shows), blur per unit of gap, live on
   uniform float uAtm4;       // 1 = translucency and sheen appear only where the sheet is stretched; 0 = everywhere on a form
@@ -203,14 +204,17 @@
     float n2 = dot(vec2(cos(a2), sin(a2)), f - vec2(0.0, 1.0)), n3 = dot(vec2(cos(a3), sin(a3)), f - vec2(1.0, 1.0));
     return mix(mix(n0, n1, u.x), mix(n2, n3, u.x), u.y);
   }
-  // Grain: three sizes of that noise, each layer turned to a different angle so no direction lines up,
-  // then pushed toward specks (film grain is clumps of points, not an even fog).
+  // Grain: four sizes of that noise, each layer turned to a different angle so no direction lines up.
+  // The two larger sizes matter as much as the fine ones: fine specks alone cannot be FOLLOWED by the
+  // eye, so when the sheet carried them they only shimmered and the movement was lost. The broader
+  // mottling is what you see slide and stretch.
   float filmGrain(vec2 frag) {
     vec2 p = frag / uFilm.y + uFilm.z * vec2(37.0, 17.0);
-    float n = gnoise(p * 1.75) * 0.9
-            + gnoise(mat2(0.80, -0.60, 0.60, 0.80) * p * 0.93 + 31.7) * 0.75
-            + gnoise(mat2(0.36, 0.93, -0.93, 0.36) * p * 0.43 + 74.3) * 0.55;
-    return sign(n) * pow(abs(n) * 1.25, 1.3) * 0.62;
+    float n = gnoise(p * 1.75) * 0.62
+            + gnoise(mat2(0.80, -0.60, 0.60, 0.80) * p * 0.93 + 31.7) * 0.66
+            + gnoise(mat2(0.36, 0.93, -0.93, 0.36) * p * 0.42 + 74.3) * 0.80
+            + gnoise(mat2(-0.53, 0.85, -0.85, -0.53) * p * 0.19 + 12.9) * 0.85;
+    return sign(n) * pow(abs(n) * 1.1, 1.12) * 0.62;
   }
 
   // The grain of a sheet that is being stretched: s = 0 relaxed, 1 fully stretched. Pulled rubber
@@ -409,7 +413,13 @@
 
     // colour lives inside the material: cream → peach → coral → saturated orange as the sheet
     // stretches over a crown. Driven by height and slope (tension), not by what is behind.
-    float stretch = pow(thin, uAtm2.w) * uTintAmt;
+    // an even ramp (tintSoft): the stretch never hits a ceiling (it eases toward full instead of being
+    // clamped, which left a flat orange plateau with an edge around it)
+    // straight up to 0.75, then a soft knee toward 1: depth still reads (a nose is warmer than a
+    // cheek), but nothing hits a hard ceiling
+    float tK = max(tension, 0.0);
+    float thinC = mix(thin, tK < 0.75 ? tK : 0.75 + 0.25 * tanh((tK - 0.75) / 0.25), uTintSoft);
+    float stretch = pow(thinC, uAtm2.w) * uTintAmt;
     // THE SHEET IS A LAYER. A form touching the rubber shows sharp and saturated; the further behind
     // the rubber it sits, the paler and blurrier it gets, until the milk of the silicone swallows it.
     // gap = sheet height minus the form's own depth at this point.
@@ -430,7 +440,7 @@
       // PROGRESSIVE: a form only just behind the sheet is a faint warmth; the colour then builds with
       // how far the sheet is pushed out over it. (At 0.5 + 0.5 * thin the whole face went orange the
       // moment it touched.)
-      stretch = max(stretch, seen * uThrough.x * (uThroughBase + (1.0 - uThroughBase) * pow(clamp(thin, 0.0, 1.0), 1.2)));
+      stretch = max(stretch, seen * uThrough.x * (uThroughBase + (1.0 - uThroughBase) * pow(clamp(thinC, 0.0, 1.0), 1.2)));
     }    // skirts stay cream, crowns go orange
     // what the touch left: a blush on the cream, a deeper warmth on forms that were already warm.
     // It tops out in the coral, never the raw orange.
@@ -441,6 +451,10 @@
     vec3 base = stretch < 0.4 ? mix(uCream, peach, smoothstep(0.0, 0.4, stretch))
               : stretch < 0.75 ? mix(peach, coral, smoothstep(0.4, 0.75, stretch))
               : mix(coral, mix(coral, uTint, 0.75), smoothstep(0.75, 1.0, stretch));   // never the raw tint
+    // ...and the colour moves in ONE straight line from cream to orange. The three stepped stages
+    // above each flatten at their ends and rush through their middle: on a face that reads as bands
+    // with edges, and the edges look like the shape itself is distorted.
+    base = mix(base, mix(uCream, uTint, 0.905 * clamp(stretch, 0.0, 1.0)), uTintSoft);
     // bunched-up material is thicker: paler
     base = mix(base, uCream * 1.03, clamp(-strain * uDragTint * 0.8, 0.0, 1.0));
     base *= 1.0 + (grain - 0.5) * 0.06 * uGrainAmt;
@@ -802,6 +816,7 @@
     stretchDrive: 1,      // 1 = translucency and sheen grow with how far a form pushes the sheet out; 0 = constant
     translucent: 0.0,     // a form's shadow side goes deeper orange instead of darker (light inside the silicone)
     sheen: 0.0,           // one broad, pale, matte highlight on the slopes that face the light
+    tintSoft: 0,          // 1 = one even ramp from cream to orange (no bands, no plateau); 0 = the three-stage ramp
     throughBase: 0.3,     // colour a form shows from just behind the sheet, before any stretch (0 = none, 1 = all at once)
     through: 0.0,         // the sheet as a layer: forms behind it show through by how close they are (live forms)
     fog: 0.22,            // ...how far behind the rubber a form can sit and still show
@@ -1770,6 +1785,7 @@
       gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.liveT.tex);
       gl.uniform1i(d.uLiveD, 6);
       gl.uniform1f(d.uThroughBase, P.throughBase);
+      gl.uniform1f(d.uTintSoft, P.tintSoft);
       gl.uniform4f(d.uThrough, P.through, P.fog, P.fogBlur, (this.rigs.length || this._ballOn) ? 1 : 0);
       gl.uniform3f(d.uFilm, P.filmGrain, Math.max(1, P.filmSize * this.dpr), P.filmStick > 0.5 ? 0 : Math.floor(this.time * P.filmRate) % 1024);
       gl.uniform3f(d.uFilm2, this.canvas.width, this.canvas.height, P.filmStick);
