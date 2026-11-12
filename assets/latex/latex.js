@@ -159,6 +159,7 @@
   uniform float uDragTint;
   uniform float uPressTint;  // how much of a pressed bowl's depth counts as stretch (0 = none, 1 = all)
   uniform vec4  uSway;       // sx, sy: the whole sheet leans (fundamental mode)
+  uniform vec4  uDrum;       // the whole sheet as a trampoline: height (+ = toward the camera), centre x, y (uv), warp
   uniform vec4  uAtm;        // atmosphere: colour bleed amount, bleed radius (height units), halo, cast shadow
   uniform vec4  uAtm2;       // cast shadow length (height units), soft focus, background shade amount, colour curve
   uniform sampler2D uLiveD;  // live forms: r = contact height, g = the form's real depth (negative = behind the sheet)
@@ -172,6 +173,7 @@
   uniform vec2  uFilm3;      // stretch (how far the grain is carried by a rising form), bump (how much it catches the light)
   uniform vec3  uFilm2;      // canvas size (px), stick (1 = the grain is in the rubber, 0 = film grain over the picture)
   uniform vec4  uRip[4];     // x, y (uv), age (s), strength (signed: + = toward the camera)
+  uniform float uRipGrain;   // how much a passing ripple moves the grain
   uniform vec4  uRipA;       // ring height, speed (height units / s), width, life (s)
   uniform vec4  uRipB;       // pop height, pop frequency (Hz), pop radius, pop life (s)
 
@@ -234,6 +236,16 @@
     return sum;
   }
 
+  // THE WHOLE SHEET IS ONE ELASTIC BED. Its lowest mode: the middle moves, the frame holds. A form
+  // pushing through lifts all of it a little; when the form lets go the bed swings back past flat and
+  // settles in a few slow beats. The bulge leans toward whatever is pushing.
+  float drumShape(vec2 uv) {
+    float win = sin(3.14159 * clamp(uv.x, 0.0, 1.0)) * sin(3.14159 * clamp(uv.y, 0.0, 1.0));
+    vec2 d = (uv - uDrum.yz) * vec2(uAspect, 1.0);
+    return win * (0.55 + 0.45 * exp(-dot(d, d) / 0.35));
+  }
+  float drum(vec2 uv) { return uDrum.x * drumShape(uv); }
+
   // cubic B-spline reconstruction from 4 bilinear taps (Sigg & Hadwiger)
   float heightCubic(vec2 uv) {
     vec2 res = 1.0 / uSimTexel;
@@ -268,6 +280,9 @@
     // whole render (heights, objects, colour) is sampled through this displacement. Near the grab the
     // material follows the hand fully, far away not at all.
     vec2 uvM = uv - uDrag.zw * vec2(1.0 / uAspect, 1.0) * gS;
+    // the bed coming toward the eye carries everything on it outward from its centre (and back in
+    // when it sinks): forms, grain and marks all ride the bounce, so the whole picture moves
+    uvM -= (uv - uDrum.yz) * drum(uv) * uDrum.w;
 
     vec4 st = texture(uState, uvM);
     float h = st.x;
@@ -295,10 +310,10 @@
       hW = acc / 16.0;
     }
     float hc = heightCubic(uvM);
-    float hl = heightCubic(uvM - vec2(e1.x, 0.0)) + sway(uv - vec2(e1.x, 0.0)) + ripple(uv - vec2(e1.x, 0.0));
-    float hr = heightCubic(uvM + vec2(e1.x, 0.0)) + sway(uv + vec2(e1.x, 0.0)) + ripple(uv + vec2(e1.x, 0.0));
-    float hd = heightCubic(uvM - vec2(0.0, e1.y)) + sway(uv - vec2(0.0, e1.y)) + ripple(uv - vec2(0.0, e1.y));
-    float hu = heightCubic(uvM + vec2(0.0, e1.y)) + sway(uv + vec2(0.0, e1.y)) + ripple(uv + vec2(0.0, e1.y));
+    float hl = heightCubic(uvM - vec2(e1.x, 0.0)) + sway(uv - vec2(e1.x, 0.0)) + ripple(uv - vec2(e1.x, 0.0)) + drum(uv - vec2(e1.x, 0.0));
+    float hr = heightCubic(uvM + vec2(e1.x, 0.0)) + sway(uv + vec2(e1.x, 0.0)) + ripple(uv + vec2(e1.x, 0.0)) + drum(uv + vec2(e1.x, 0.0));
+    float hd = heightCubic(uvM - vec2(0.0, e1.y)) + sway(uv - vec2(0.0, e1.y)) + ripple(uv - vec2(0.0, e1.y)) + drum(uv - vec2(0.0, e1.y));
+    float hu = heightCubic(uvM + vec2(0.0, e1.y)) + sway(uv + vec2(0.0, e1.y)) + ripple(uv + vec2(0.0, e1.y)) + drum(uv + vec2(0.0, e1.y));
     vec2 g = vec2(hr - hl, hu - hd) / (2.0 * e1);         // dh per uv
     g.x /= uAspect;                                       // → per height unit
     g *= uHeightScale;
@@ -345,6 +360,13 @@
       wide += dir * (max(mix(s1.x, s1.y, 0.85), 0.0) / 0.07 + max(mix(s2.x, s2.y, 0.85), 0.0) / 0.16);
     }
     wide *= 0.125 * uFilm3.x;                                   // ~ slope of the wide height, times the give
+    // the click's swell and thud, and the bed's own bounce, move the grain too: the pattern spreads
+    // off a passing crest and closes back behind it. Without this the ripple was light sliding over a
+    // texture that did not notice.
+    float rE = 0.012;
+    vec2 rG = vec2(ripple(uv + vec2(rE, 0.0)) - ripple(uv - vec2(rE, 0.0)), ripple(uv + vec2(0.0, rE)) - ripple(uv - vec2(0.0, rE))) / (2.0 * rE);
+    rG.x /= uAspect;
+    wide += rG * uFilm3.x * uRipGrain;
     float wl = length(wide);
     vec2 gCarry = (wl > 1e-5 ? wide / wl * 0.07 * tanh(wl / 0.07) : vec2(0.0)) * vec2(1.0 / uAspect, 1.0);   // rubber only gives so far
     vec2 gPos = mix(gl_FragCoord.xy, (uvM + gCarry) * uFilm2.xy, uFilm2.z);
@@ -789,6 +811,12 @@
     cursorBall: 0,        // radius of the cursor ball behind the sheet (viewport heights); 0 = the old finger dimple
     ballHover: 0.4,       // how far it pushes the sheet out when the cursor rests on it
     ballPress: 0.82,      // ...and on a press
+    drum: 0.0,            // the whole sheet as an elastic bed: how far forms and fingers move all of it (0 = off)
+    drumFreq: 1.2,        // ...beats per second (slow: it is the whole sheet)
+    drumDamp: 0.13,       // ...0.1 keeps bouncing, 0.5 barely overshoots
+    drumKick: 1.2,        // ...extra shove on first touch, on letting go, on a click
+    drumWarp: 0.16,       // ...how much the picture is carried outward as the bed rises
+    ripGrain: 2.0,        // a passing ripple moves the grain this much (0 = the ripple is light only)
     bounce: 0.5,          // a form's first touch and its letting go make the sheet thud (0 = off)
     ripAmt: 0.30,         // click: height of the one swell that runs out from the touch
     ripSpeed: 2.6,        // ...how fast it runs (height units / s): rubber is quick
@@ -880,6 +908,7 @@
       this.dimple = { depth: 0, v: 0 };
       this.drag = { cx: 0.5, cy: 0.5, grabX: 0.5, grabY: 0.5, ex: 0, ey: 0, vx: 0, vy: 0 };
       this.sway = { x: 0, y: 0, vx: 0, vy: 0 };
+      this.drum = { z: 0, v: 0, cx: 0.5, cy: 0.5 };   // the whole sheet as a trampoline
       this.rips = [];            // recent clicks: { x, y, t0, amp }
       this.time = 0;
       this.frame = 0;
@@ -1353,6 +1382,7 @@
       this.dimple.depth = this.dimple.v = 0;
       this.drag.ex = this.drag.ey = this.drag.vx = this.drag.vy = 0;
       this.sway.x = this.sway.y = this.sway.vx = this.sway.vy = 0;
+      if (this.drum) { this.drum.z = this.drum.v = 0; }
       this.rips = []; this._wasPressing = false;
       if (this.paint) for (const t of this.paint) { gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT); }
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -1542,6 +1572,8 @@
         const pulled = Math.min(1, Math.hypot(dr.ex * a, dr.ey) / Math.max(P.dragMax, 1e-4));
         const deep = Math.min(1, Math.abs(this.dimple.depth) / Math.max(P.pressDepth, 1e-4));
         const amp = pressing ? -0.55 : 0.6 * deep + 0.7 * pulled;
+        // the bed answers the hand as well: a press sends it in, letting go throws it back out
+        this.drum.v += (pressing ? -1.1 : 1.6 * (0.4 * deep + 0.6 * pulled) + 0.5) * P.drumKick;
         if (Math.abs(amp) > 0.02) {
           this.rips.push({ x: pressing ? this.pointer.x : dr.cx, y: pressing ? this.pointer.y : dr.cy, t0: this.time, amp });
           if (this.rips.length > 4) this.rips.shift();
@@ -1576,6 +1608,20 @@
       const ty = on * ((cu.y - 0.5) * P.swayAmt + cu.vy * P.swayVel) * (pressing ? 2.2 : 1);
       [sw.x, sw.vx] = S(sw.x, sw.vx, tx, P.swayK, P.swayC, dt);
       [sw.y, sw.vy] = S(sw.y, sw.vy, ty, P.swayK, P.swayC, dt);
+      // the bed: pushed out by every form that is through it and pushed in by a pressing finger,
+      // on a slow, lightly damped spring. Its centre drifts toward whatever is doing the pushing.
+      const dm2 = this.drum;
+      let load = 0, lx = 0, ly = 0;
+      for (const r of this.rigs) { const w = Math.max(0, r.pen || 0); if (w > 0 && r._uv) { load += w; lx += r._uv[0] * w; ly += r._uv[1] * w; } }
+      const finger = Math.max(0, this.dimple.depth);
+      if (finger > 0.01) { lx += cu.x * finger; ly += cu.y * finger; }
+      const tot = load + finger;
+      const cgx = tot > 1e-3 ? lx / tot : 0.5, cgy = tot > 1e-3 ? ly / tot : 0.5;
+      const ce = Math.min(1, dt * 2.5);
+      dm2.cx += (cgx - dm2.cx) * ce; dm2.cy += (cgy - dm2.cy) * ce;
+      const goal = (load * 1.6 - finger * 0.9) * P.drum;
+      const wd = 6.2832 * P.drumFreq;
+      for (let i = 0; i < 4; i++) { const hh = dt / 4; dm2.v += (-wd * wd * (dm2.z - goal) - 2 * P.drumDamp * wd * dm2.v) * hh; dm2.z += dm2.v * hh; }
     }
 
     // drag vector in height units, soft-limited: rubber only stretches so far
@@ -1689,6 +1735,8 @@
       gl.uniform1f(d.uDragTint, P.dragTint);
       gl.uniform1f(d.uPressTint, P.pressTint);
       gl.uniform4f(d.uSway, this.sway.x, this.sway.y, 0, 0);
+      gl.uniform4f(d.uDrum, this.drum.z, this.drum.cx, this.drum.cy, P.drumWarp);
+      gl.uniform1f(d.uRipGrain, P.ripGrain);
       gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, this.paint[0].tex);
       gl.uniform1i(d.uPaint, 5);
       gl.uniform1f(d.uPaintAmt, P.paintAmt);
@@ -1727,6 +1775,11 @@
       // as a blot and becomes a streak once the rubber stops giving and the finger slides over it
       let mx = cu.x, my = cu.y;
       if (this.pointer.down) { const dv = this._dragVisible(); mx -= dv[0] / a; my -= dv[1]; }
+      // a press starts a NEW stroke where the finger is. On a phone the contact point is still
+      // wherever the last touch ended; without this the first frame of a touch drew one long scratch
+      // from there to the finger.
+      if (pressing !== !!this._paintPressing) { this._paintPressing = pressing; this._paintLast = null; }
+      if (this.pointer.touch && !pressing) this._paintLast = null;
       const last = this._paintLast || { x: mx, y: my };
       const travel = Math.hypot((mx - last.x) * a, my - last.y);            // height units this frame
       const speed = travel / Math.max(dt, 1e-4);
@@ -1780,8 +1833,10 @@
             const dd = r.def, fx = dd.flip ? -1 : 1;
             this.rips.push({ x: dd.x + r.centre[0] * fx * dd.size / this.aspect, y: dd.y + r.centre[1] * dd.size, t0: this.time, amp: (touching ? 0.5 : -0.75) * this.params.bounce });
             if (this.rips.length > 4) this.rips.shift();
+            this.drum.v += (touching ? 0.5 : -1.3) * this.params.drumKick;      // first touch nudges the bed out; letting go drops it
           }
           r._touching = touching;
+          r._uv = [r.def.x + r.centre[0] * (r.def.flip ? -1 : 1) * r.def.size / this.aspect, r.def.y + r.centre[1] * r.def.size];
         }
         if (!r.count) continue;
         const d = r.def;

@@ -35,7 +35,7 @@
     // 12 Nov: the atmosphere of Juan's reference boards (forms glow orange from inside and dissolve at
     // the edges, a halo of light around them, soft warm cast shadow, the sheet falling to taupe)
     ambience: {
-      through: 0.92, fog: 0.24, fogBlur: 0.11, translucent: 0, sheen: 0,   // off for now (13 Nov): Juan saw hard edges on the nose with them on
+      through: 0.92, fog: 0.24, fogBlur: 0.11, drum: 1.0, translucent: 0, sheen: 0,   // off for now (13 Nov): Juan saw hard edges on the nose with them on
       bleed: 0.35, bleedRadius: 0.04, tintCurve: 1.3, thinAmt: 1.1, tintAmt: 1.0, glow: 0.75,
       halo: 0.95, cast: 0.42, castLen: 0.17, focus: 0.3, bgAmt: 0.8, bgShade: '#c6aa88', vignette: 0.07,
       cream: '#f8ecd8', tint: '#ff7424', shadowTint: '#ecd6bf',
