@@ -163,7 +163,6 @@
   uniform vec4  uAtm;        // atmosphere: colour bleed amount, bleed radius (height units), halo, cast shadow
   uniform vec4  uAtm2;       // cast shadow length (height units), soft focus, background shade amount, colour curve
   uniform sampler2D uLiveD;  // live forms: r = contact height, g = the form's real depth (negative = behind the sheet)
-  uniform float uRampEven;   // 1 = the colour moves evenly between its stages; 0 = eased (banded)
   uniform float uThroughBase; // how much of the through colour a form shows before it stretches the sheet at all
   uniform vec4  uThrough;    // amount, fog length (how far behind a form still shows), blur per unit of gap, live on
   uniform float uAtm4;       // 1 = translucency and sheen appear only where the sheet is stretched; 0 = everywhere on a form
@@ -361,7 +360,6 @@
       vec2 s2 = texture(uState, uvM + dir * 0.16 * vec2(1.0 / uAspect, 1.0)).xz;
       wide += dir * (max(mix(s1.x, s1.y, 0.85), 0.0) / 0.07 + max(mix(s2.x, s2.y, 0.85), 0.0) / 0.16);
     }
-    vec2 formDir = dot(wide, wide) > 1e-6 ? normalize(wide) : vec2(0.0);   // from here, which way the nearest form lies
     wide *= 0.125 * uFilm3.x;                                   // ~ slope of the wide height, times the give
     // the click's swell and thud, and the bed's own bounce, move the grain too: the pattern spreads
     // off a passing crest and closes back behind it. Without this the ripple was light sliding over a
@@ -405,11 +403,7 @@
 
     // colour lives inside the material: cream → peach → coral → saturated orange as the sheet
     // stretches over a crown. Driven by height and slope (tension), not by what is behind.
-    // rampEven also rounds the very top: full stretch is approached, not hit (the hard stop left a
-    // flat patch with an outline on a nose). Below 0.82 nothing changes.
-    float tR = max(tension, 0.0);
-    float thinR = mix(thin, tR < 0.82 ? tR : 0.82 + 0.18 * tanh((tR - 0.82) / 0.18), uRampEven);
-    float stretch = pow(thinR, uAtm2.w) * uTintAmt;
+    float stretch = pow(thin, uAtm2.w) * uTintAmt;
     // THE SHEET IS A LAYER. A form touching the rubber shows sharp and saturated; the further behind
     // the rubber it sits, the paler and blurrier it gets, until the milk of the silicone swallows it.
     // gap = sheet height minus the form's own depth at this point.
@@ -430,10 +424,7 @@
       // PROGRESSIVE: a form only just behind the sheet is a faint warmth; the colour then builds with
       // how far the sheet is pushed out over it. (At 0.5 + 0.5 * thin the whole face went orange the
       // moment it touched.)
-      float thr = seen * uThrough.x * (uThroughBase + (1.0 - uThroughBase) * pow(clamp(thin, 0.0, 1.0), 1.2));
-      // where the two sources of colour meet, a plain max leaves a crease; rampEven rounds it
-      float mk = 0.18 * uRampEven + 1e-4, mh = max(mk - abs(stretch - thr), 0.0) / mk;
-      stretch = max(stretch, thr) + mh * mh * mk * 0.25;
+      stretch = max(stretch, seen * uThrough.x * (uThroughBase + (1.0 - uThroughBase) * pow(clamp(thin, 0.0, 1.0), 1.2)));
     }    // skirts stay cream, crowns go orange
     // what the touch left: a blush on the cream, a deeper warmth on forms that were already warm.
     // It tops out in the coral, never the raw orange.
@@ -441,14 +432,9 @@
     stretch = min(stretch + paint * uPaintAmt * (0.75 - 0.35 * min(stretch, 1.0)), max(stretch, 0.82));
     vec3 peach = mix(uCream, uTint, 0.28);
     vec3 coral = mix(uCream, uTint, 0.62);
-    // Same four colours at the same four points. rampEven only changes how the colour travels
-    // BETWEEN them: eased (0), each stage sits flat at its ends and rushes through its middle, which
-    // on a form reads as bands with edges; even (1), it moves at a steady rate.
-    float k1 = clamp(stretch / 0.4, 0.0, 1.0), k2 = clamp((stretch - 0.4) / 0.35, 0.0, 1.0), k3 = clamp((stretch - 0.75) / 0.25, 0.0, 1.0);
-    k1 = mix(k1 * k1 * (3.0 - 2.0 * k1), k1, uRampEven); k2 = mix(k2 * k2 * (3.0 - 2.0 * k2), k2, uRampEven); k3 = mix(k3 * k3 * (3.0 - 2.0 * k3), k3, uRampEven);
-    vec3 base = stretch < 0.4 ? mix(uCream, peach, k1)
-              : stretch < 0.75 ? mix(peach, coral, k2)
-              : mix(coral, mix(coral, uTint, 0.75), k3);   // never the raw tint
+    vec3 base = stretch < 0.4 ? mix(uCream, peach, smoothstep(0.0, 0.4, stretch))
+              : stretch < 0.75 ? mix(peach, coral, smoothstep(0.4, 0.75, stretch))
+              : mix(coral, mix(coral, uTint, 0.75), smoothstep(0.75, 1.0, stretch));   // never the raw tint
     // bunched-up material is thicker: paler
     base = mix(base, uCream * 1.03, clamp(-strain * uDragTint * 0.8, 0.0, 1.0));
     base *= 1.0 + (grain - 0.5) * 0.06 * uGrainAmt;
@@ -491,30 +477,21 @@
     // cast shadow: walk toward the light; anything that stands above the line to it shades this
     // point. Six steps and a soft threshold give a wide penumbra; the shade is warm.
     if (uAtm.w > 0.0) {
-      // A form that comes forward shades the sheet on the side away from the light. The walk toward
-      // the light fans out a little (two rays, 14 degrees either side), so the shadow has no hard
-      // edge, and the further a form stands out the further its shade reaches (up to castLen).
-      vec2 Ld = normalize(uLight.xy);
-      vec2 La = vec2(Ld.x * 0.970 - Ld.y * 0.242, Ld.x * 0.242 + Ld.y * 0.970) * vec2(1.0 / uAspect, 1.0);
-      vec2 Lb = vec2(Ld.x * 0.970 + Ld.y * 0.242, -Ld.x * 0.242 + Ld.y * 0.970) * vec2(1.0 / uAspect, 1.0);
-      float occ = 0.0, h0 = max(h, 0.0);
-      for (int i = 1; i <= 7; i++) {
-        float d = uAtm2.x * float(i) / 7.0, w = 1.0 - float(i) / 10.0;
-        // 0.8: the light sits lower than before (1.6), so a form of ordinary height does throw a shade
-        occ += (smoothstep(0.0, 0.3, (texture(uState, uvM + La * d).x - h0) - d * 0.8)
-              + smoothstep(0.0, 0.3, (texture(uState, uvM + Lb * d).x - h0) - d * 0.8)) * w;
+      vec2 toL = normalize(uLight.xy) * vec2(1.0 / uAspect, 1.0);
+      float occ = 0.0;
+      for (int i = 1; i <= 6; i++) {
+        float d = uAtm2.x * float(i) / 6.0;
+        float hs = texture(uState, uvM + toL * d).x;
+        occ += smoothstep(0.0, 0.42, (hs - max(h, 0.0)) - d * 1.6) * (1.0 - float(i) / 9.0);
       }
-      float sh = clamp(occ / 6.4, 0.0, 1.0) * uAtm.w;
+      float sh = clamp(occ / 3.2, 0.0, 1.0) * uAtm.w;
       // the cast shadow belongs to the sheet AROUND a form. On the form itself it is let go: light
       // travels inside the silicone and fills it, and a shadow that starts exactly behind the ridge of
       // a nose is a hard line down its middle (it was, in deep orange).
       lit = mix(lit, lit * uBgShade * vec3(0.93, 0.88, 0.84), sh * (1.0 - 0.9 * onForm));
     }
     // halo: light caught in the sheet just outside a form (the wide reading is higher than the point)
-    // ...and only on the side the light comes from. All the way round, it lit the far side too and
-    // cancelled the shadow that belongs there.
-    float litSide = smoothstep(-0.35, 0.65, -dot(formDir, normalize(uLight.xy)));
-    lit += max(hW - max(h, 0.0), 0.0) * uAtm.z * vec3(1.0, 0.95, 0.88) * (0.5 + 0.5 * diff) * mix(1.0, litSide, min(uAtm.w * 4.0, 1.0));
+    lit += max(hW - max(h, 0.0), 0.0) * uAtm.z * vec3(1.0, 0.95, 0.88) * (0.5 + 0.5 * diff);
 
     // through the thin zones we see what is behind, tinted by transmission
     float alpha = 1.0 - thin * uTransl;
@@ -819,7 +796,6 @@
     stretchDrive: 1,      // 1 = translucency and sheen grow with how far a form pushes the sheet out; 0 = constant
     translucent: 0.0,     // a form's shadow side goes deeper orange instead of darker (light inside the silicone)
     sheen: 0.0,           // one broad, pale, matte highlight on the slopes that face the light
-    rampEven: 0,          // 1 = colour moves at a steady rate between cream, peach, coral and orange (no bands)
     throughBase: 0.3,     // colour a form shows from just behind the sheet, before any stretch (0 = none, 1 = all at once)
     through: 0.0,         // the sheet as a layer: forms behind it show through by how close they are (live forms)
     fog: 0.22,            // ...how far behind the rubber a form can sit and still show
@@ -1798,7 +1774,6 @@
       gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.liveT.tex);
       gl.uniform1i(d.uLiveD, 6);
       gl.uniform1f(d.uThroughBase, P.throughBase);
-      gl.uniform1f(d.uRampEven, P.rampEven);
       gl.uniform4f(d.uThrough, P.through, P.fog, P.fogBlur, (this.rigs.length || this._ballOn) ? 1 : 0);
       gl.uniform3f(d.uFilm, P.filmGrain, Math.max(1, P.filmSize * this.dpr), P.filmStick > 0.5 ? 0 : Math.floor(this.time * P.filmRate) % 1024);
       gl.uniform3f(d.uFilm2, this.canvas.width, this.canvas.height, P.filmStick);
